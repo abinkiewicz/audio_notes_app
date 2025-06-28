@@ -1,20 +1,59 @@
 from io import BytesIO
 import streamlit as st
 from audiorecorder import audiorecorder  # type: ignore
+from dotenv import dotenv_values
+from openai import OpenAI
 
+env = dotenv_values(".env")
+
+AUDIO_TRANSCRIBE_MODEL = "whisper-1"
+
+@st.cache_resource #decorator for saving openai key just once at the beginning 
+def get_openai_client():
+    return OpenAI(api_key=env["OPENAI_API_KEY"])
+
+def transcribe_audio(audio_bytes):
+    openai_client = get_openai_client()
+    audio_file = BytesIO(audio_bytes)
+    audio_file.name = "audio.mp3"
+    transcript = openai_client.audio.transcriptions.create(
+        file=audio_file,
+        model=AUDIO_TRANSCRIBE_MODEL,
+        response_format="verbose_json",
+    )
+
+    return transcript.text
 
 #
 # MAIN
 #
-st.set_page_config(page_title="Audio Notatki", layout="centered")
+st.set_page_config(page_title="Transcript me", layout="centered")
 
-st.title("Audio Notatki")
+if "note_audio_bytes" not in st.session_state:
+    st.session_state["note_audio_bytes"] = None
+
+if "note_audio_text" not in st.session_state:
+    st.session_state["note_audio_text"] = ""
+
+st.title(":studio_microphone: Transcript me")
+#Receiving segment (from pydub) with audio
 note_audio = audiorecorder(
-    start_prompt="Nagraj notatkę",
-    stop_prompt="Zatrzymaj nagrywanie",
+    start_prompt="Start recording",
+    stop_prompt="Stop recording",
 )
+
 if note_audio:
     audio = BytesIO()
     note_audio.export(audio, format="mp3")
-    note_audio_bytes = audio.getvalue()
-    st.audio(note_audio_bytes, format="audio/mp3")
+    st.session_state["note_audio_bytes"] = audio.getvalue()
+    st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
+
+    if st.button("Press to transcript"):
+        st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
+
+    if st.session_state["note_audio_text"]:
+        st.text_area(
+            "Audio transcription",
+            value=st.session_state["note_audio_text"],
+            disabled=True,
+        )
