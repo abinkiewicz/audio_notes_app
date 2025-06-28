@@ -29,6 +29,23 @@ def transcribe_audio(audio_bytes):
 #
 st.set_page_config(page_title="Transcript me", layout="centered")
 
+#OpenAI API key protection
+if not st.session_state.get("openai_api_key"):
+    if "OPENAI_API_KEY" in env:
+        st.session_state["openai_api_key"] = env["OPENAI_API_KEY"]
+
+    else:
+        st.info("Dodaj swój klucz API OpenAI aby móc korzystać z tej aplikacji")
+        st.session_state["openai_api_key"] = st.text_input("Klucz API", type="password")
+        if st.session_state["openai_api_key"]:
+            st.rerun()
+
+#Stop rendering until theres no openai key
+if not st.session_state.get("openai_api_key"):
+    st.stop()
+
+
+# Session state initialization
 if "note_audio_bytes" not in st.session_state:
     st.session_state["note_audio_bytes"] = None
 
