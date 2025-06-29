@@ -3,6 +3,7 @@ import streamlit as st
 from audiorecorder import audiorecorder  # type: ignore
 from dotenv import dotenv_values
 from openai import OpenAI
+from hashlib import md5
 
 env = dotenv_values(".env")
 
@@ -46,6 +47,9 @@ if not st.session_state.get("openai_api_key"):
 
 
 # Session state initialization
+if "note_audio_bytes_md5" not in st.session_state:
+    st.session_state["note_audio_bytes_md5"] = None
+
 if "note_audio_bytes" not in st.session_state:
     st.session_state["note_audio_bytes"] = None
 
@@ -63,14 +67,17 @@ if note_audio:
     audio = BytesIO()
     note_audio.export(audio, format="mp3")
     st.session_state["note_audio_bytes"] = audio.getvalue()
+
+    #Clearing transcription field after next recording
+    current_md5 = md5(st.session_state["note_audio_bytes"]).hexdigest()
+    if st.session_state["note_audio_bytes_md5"] != current_md5:
+        st.session_state["note_audio_text"] = ""
+        st.session_state["note_audio_bytes_md5"] = current_md5
+
     st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
 
     if st.button("Press to transcript"):
         st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
     if st.session_state["note_audio_text"]:
-        st.text_area(
-            "Audio transcription",
-            value=st.session_state["note_audio_text"],
-            disabled=True,
-        )
+        st.text_area("Edit note", value=st.session_state["note_audio_text"])
