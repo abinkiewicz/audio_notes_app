@@ -4,12 +4,20 @@ from audiorecorder import audiorecorder  # type: ignore
 from dotenv import dotenv_values
 from openai import OpenAI
 from hashlib import md5
+from qdrant_client import QdrantClient
+from qdrant_client.models import PointStruct, Distance, VectorParams
 
 env = dotenv_values(".env")
 
+EMBEDDING_MODEL = "text-embedding-3-large"
+
+EMBEDDING_DIM = 3072
+
+QDRANT_COLLECTION_NAME = "notes"
+
 AUDIO_TRANSCRIBE_MODEL = "whisper-1"
 
-@st.cache_resource #decorator for saving openai key just once at the beginning 
+
 def get_openai_client():
     return OpenAI(api_key=env["OPENAI_API_KEY"])
 
@@ -24,6 +32,55 @@ def transcribe_audio(audio_bytes):
     )
 
     return transcript.text
+#
+# DB
+#
+@st.cache_resource
+def get_qdrant_client():
+    return QdrantClient(path=":memory:")
+
+def assure_db_collection_exists():
+    qdrant_client = get_qdrant_client()
+    if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
+        print("Tworzę kolekcję")
+        qdrant_client.create_collection(
+            collection_name=QDRANT_COLLECTION_NAME,
+            vectors_config=VectorParams(
+                size=EMBEDDING_DIM,
+                distance=Distance.COSINE,
+            ),
+        )
+    else:
+        print("Kolekcja już istnieje")
+
+def get_embedding(text):
+    openai_client = get_openai_client()
+    result = openai_client.embeddings.create(
+        input=[text],
+        model=EMBEDDING_MODEL,
+        dimensions=EMBEDDING_DIM,
+    )
+
+    return result.data[0].embedding
+
+def add_note_to_db(note_text):
+    qdrant_client = get_qdrant_client()
+    points_count = qdrant_client.count(
+        collection_name=QDRANT_COLLECTION_NAME,
+        exact=True,
+    )
+    qdrant_client.upsert(
+        collection_name=QDRANT_COLLECTION_NAME,
+        points=[
+            PointStruct(
+                id=points_count.count + 1,
+                vector=get_embedding(text=note_text),
+                payload={
+                    "text": note_text,
+                },
+            )
+        ]
+    )
 
 #
 # MAIN
@@ -53,10 +110,13 @@ if "note_audio_bytes_md5" not in st.session_state:
 if "note_audio_bytes" not in st.session_state:
     st.session_state["note_audio_bytes"] = None
 
+if "note_text" not in st.session_state:
+    st.session_state["note_text"] = ""
 if "note_audio_text" not in st.session_state:
     st.session_state["note_audio_text"] = ""
 
 st.title(":studio_microphone: Transcript me")
+assure_db_collection_exists()
 #Receiving segment (from pydub) with audio
 note_audio = audiorecorder(
     start_prompt="Start recording",
@@ -80,4 +140,8 @@ if note_audio:
         st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
     if st.session_state["note_audio_text"]:
-        st.text_area("Edit note", value=st.session_state["note_audio_text"])
+        st.session_state["note_text"] = st.text_area("Edit note", value=st.session_state["note_audio_text"])
+
+    if st.session_state["note_text"] and st.button("Save note", disabled=not st.session_state["note_text"]):
+        add_note_to_db(note_text=st.session_state["note_text"])
+        st.toast("Note saved", icon="🎉")
