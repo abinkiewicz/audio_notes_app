@@ -19,7 +19,7 @@ AUDIO_TRANSCRIBE_MODEL = "whisper-1"
 
 
 def get_openai_client():
-    return OpenAI(api_key=env["OPENAI_API_KEY"])
+    return OpenAI(api_key=st.session_state["openai_api_key"])
 
 def transcribe_audio(audio_bytes):
     openai_client = get_openai_client()
@@ -82,6 +82,34 @@ def add_note_to_db(note_text):
         ]
     )
 
+def list_notes_from_db(query=None):
+    qdrant_client = get_qdrant_client()
+    if not query:
+        notes = qdrant_client.scroll(collection_name=QDRANT_COLLECTION_NAME, limit=10)[0]
+        result = []
+        for note in notes:
+            result.append({
+                "text": note.payload["text"],
+                "score": None,
+            })
+
+        return result
+
+    else:
+        notes = qdrant_client.search(
+            collection_name=QDRANT_COLLECTION_NAME,
+            query_vector=get_embedding(text=query),
+            limit=10,
+        )
+        result = []
+        for note in notes:
+            result.append({
+                "text": note.payload["text"],
+                "score": note.score,
+            })
+
+        return result
+    
 #
 # MAIN
 #
@@ -93,8 +121,8 @@ if not st.session_state.get("openai_api_key"):
         st.session_state["openai_api_key"] = env["OPENAI_API_KEY"]
 
     else:
-        st.info("Dodaj swój klucz API OpenAI aby móc korzystać z tej aplikacji")
-        st.session_state["openai_api_key"] = st.text_input("Klucz API", type="password")
+        st.info("Add your OpenAI AI key to use this application")
+        st.session_state["openai_api_key"] = st.text_input("API key", type="password")
         if st.session_state["openai_api_key"]:
             st.rerun()
 
@@ -117,31 +145,41 @@ if "note_audio_text" not in st.session_state:
 
 st.title(":studio_microphone: Transcript me")
 assure_db_collection_exists()
-#Receiving segment (from pydub) with audio
-note_audio = audiorecorder(
-    start_prompt="Start recording",
-    stop_prompt="Stop recording",
-)
+add_tab, search_tab = st.tabs(["Add", "Search"])
+with add_tab:
+    note_audio = audiorecorder(
+        start_prompt="Start recording",
+        stop_prompt="Stop recording",
+    )
+    if note_audio:
+        audio = BytesIO()
+        note_audio.export(audio, format="mp3")
+        st.session_state["note_audio_bytes"] = audio.getvalue()
+        current_md5 = md5(st.session_state["note_audio_bytes"]).hexdigest()
+        if st.session_state["note_audio_bytes_md5"] != current_md5:
+            st.session_state["note_audio_text"] = ""
+            st.session_state["note_text"] = ""
+            st.session_state["note_audio_bytes_md5"] = current_md5
 
-if note_audio:
-    audio = BytesIO()
-    note_audio.export(audio, format="mp3")
-    st.session_state["note_audio_bytes"] = audio.getvalue()
+        st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
 
-    #Clearing transcription field after next recording
-    current_md5 = md5(st.session_state["note_audio_bytes"]).hexdigest()
-    if st.session_state["note_audio_bytes_md5"] != current_md5:
-        st.session_state["note_audio_text"] = ""
-        st.session_state["note_audio_bytes_md5"] = current_md5
+        if st.button("Transcribe the audio"):
+            st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
-    st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
+        if st.session_state["note_audio_text"]:
+            st.session_state["note_text"] = st.text_area("Edit note", value=st.session_state["note_audio_text"])
 
-    if st.button("Press to transcript"):
-        st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
+        if st.session_state["note_text"] and st.button("Save note", disabled=not st.session_state["note_text"]):
+            qdrant_client = get_qdrant_client()
 
-    if st.session_state["note_audio_text"]:
-        st.session_state["note_text"] = st.text_area("Edit note", value=st.session_state["note_audio_text"])
+            add_note_to_db(note_text=st.session_state["note_text"])
+            st.toast("Note saved", icon="🎉")
 
-    if st.session_state["note_text"] and st.button("Save note", disabled=not st.session_state["note_text"]):
-        add_note_to_db(note_text=st.session_state["note_text"])
-        st.toast("Note saved", icon="🎉")
+with search_tab:
+    query = st.text_input("Search for a note")
+    if st.button("Search"):
+        for note in list_notes_from_db(query):
+            with st.container(border=True):
+                st.markdown(note["text"])
+                if note["score"]:
+                    st.markdown(f':violet[{note["score"]}]')
