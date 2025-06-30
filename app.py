@@ -38,8 +38,8 @@ def transcribe_audio(audio_bytes):
 @st.cache_resource
 def get_qdrant_client():
     return QdrantClient(
-    url="https://523fcbff-0208-4263-97e8-85393f34077f.europe-west3-0.gcp.cloud.qdrant.io:6333", 
-    api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s09zYC3VePxXNJ_iIC-TnHO0Kss49wTgm0ERodC7MU0",
+    url=env["QDRANT_URL"], 
+    api_key=env["QDRANT_API_KEY"],
 )
 
 
